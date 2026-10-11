@@ -1,0 +1,93 @@
+# ارفع ملف zip واحد (أو أكتر) في جذر المستودع + هذا الملف في .github/workflows/
+# الـ workflow بيفك أحدث zip، بيبني المود، وبيرفع الـ jar في Actions > Artifacts.
+# لو عملت Tag بالشكل v1.0.0 بيطلّع Release فيه الـ jar.
+
+name: unzip-and-build
+
+on:
+  push:
+    paths:
+      - '*.zip'
+      - '.github/workflows/unzip-and-build.yml'
+    tags: ['v*']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: checkout repository
+        uses: actions/checkout@v6
+
+      - name: unzip the project
+        id: unzip
+        run: |
+          set -e
+          ZIP=$(ls -t *.zip 2>/dev/null | head -n 1 || true)
+          if [ -z "$ZIP" ]; then
+            echo "::error::No .zip file found in the repository root. Upload your project zip next to .github/"
+            exit 1
+          fi
+          echo "Using $ZIP"
+          mkdir -p _build
+          unzip -q -o "$ZIP" -d _build
+          GRADLEW=$(find _build -maxdepth 4 -name gradlew -not -path '*/__MACOSX/*' | head -n 1)
+          if [ -z "$GRADLEW" ]; then
+            echo "::error::gradlew not found inside $ZIP. Make sure the zip contains the whole project (build.gradle, gradlew, gradle/wrapper, src)."
+            exit 1
+          fi
+          DIR=$(dirname "$GRADLEW")
+          chmod +x "$DIR/gradlew"
+          echo "dir=$DIR" >> "$GITHUB_OUTPUT"
+          echo "Project folder: $DIR"
+
+      - name: validate gradle wrapper
+        uses: gradle/actions/wrapper-validation@v6
+
+      - name: setup jdk 25
+        uses: actions/setup-java@v5
+        with:
+          java-version: '25'
+          distribution: 'microsoft'
+
+      - name: setup gradle (with cache)
+        uses: gradle/actions/setup-gradle@v6
+        with:
+          build-root-directory: ${{ steps.unzip.outputs.dir }}
+
+      - name: build
+        working-directory: ${{ steps.unzip.outputs.dir }}
+        run: ./gradlew build --stacktrace
+
+      - name: upload mod jar
+        uses: actions/upload-artifact@v7
+        with:
+          name: record-mod
+          path: |
+            ${{ steps.unzip.outputs.dir }}/build/libs/*.jar
+            !${{ steps.unzip.outputs.dir }}/build/libs/*-sources.jar
+          if-no-files-found: error
+
+  release:
+    # يشتغل فقط لما تعمل Tag مثل v1.0.0
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: build
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - name: download mod jar
+        uses: actions/download-artifact@v7
+        with:
+          name: record-mod
+          path: dist
+
+      - name: create github release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/*.jar
+          generate_release_notes: true
+          
