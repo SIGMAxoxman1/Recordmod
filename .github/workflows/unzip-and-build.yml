@@ -44,6 +44,20 @@ jobs:
           echo "dir=$DIR" >> "$GITHUB_OUTPUT"
           echo "Project folder: $DIR"
 
+      - name: download ReplayMod for 26.2 (it is packed inside the mod)
+        run: |
+          DIR="${{ steps.unzip.outputs.dir }}"
+          mkdir -p "$DIR/libs"
+          API='https://api.modrinth.com/v2/project/replaymod/version?loaders=%5B%22fabric%22%5D&game_versions=%5B%2226.2%22%5D'
+          URL=$(curl -fsSL -A "record-mod-build" "$API" | jq -r '(map(select(.version_type=="release"))[0] // .[0]) | .files | (map(select(.primary))[0] // .[0]) | .url' || true)
+          if [ -z "$URL" ] || [ "$URL" = "null" ]; then
+            echo "::error::Could not find a ReplayMod build for Minecraft 26.2 on Modrinth. Download it yourself and put it in libs/replaymod.jar inside the zip."
+            exit 1
+          fi
+          echo "Downloading $URL"
+          curl -fsSL -A "record-mod-build" -o "$DIR/libs/replaymod.jar" "$URL"
+          ls -la "$DIR/libs"
+
       - name: validate gradle wrapper
         uses: gradle/actions/wrapper-validation@v6
 
@@ -90,4 +104,3 @@ jobs:
         with:
           files: dist/*.jar
           generate_release_notes: true
-          
